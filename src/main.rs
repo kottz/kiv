@@ -466,10 +466,6 @@ async fn download_handler(
 
     // --- Security: Re-validate the path before serving ---
     // Ensures the file hasn't been moved outside root or deleted *after* link creation.
-    // Use the stored *absolute* path for re-validation check against root.
-    // Note: resolve_and_validate_path expects a *relative* path as second arg typically.
-    // We need to ensure the *canonicalized absolute* path still starts with root.
-    // Let's slightly adjust the check here or rely on the canonicalization done during resolve_and_validate
     match path_to_serve.canonicalize() {
         // Re-canonicalize to check current state
         Ok(canonical_path_now) => {
@@ -481,7 +477,6 @@ async fn download_handler(
                     state.root_dir.display(),
                     uuid
                 );
-                // Optionally remove the invalid share: state.shares.remove(&uuid);
                 return error_response(StatusCode::FORBIDDEN, "Access denied.");
             }
             // Ensure it's still a file
@@ -491,7 +486,6 @@ async fn download_handler(
                     canonical_path_now.display(),
                     uuid
                 );
-                // Optionally remove the invalid share: state.shares.remove(&uuid);
                 return error_response(
                     StatusCode::NOT_FOUND,
                     "Shared item is no longer accessible as a file.",
@@ -506,7 +500,6 @@ async fn download_handler(
                 uuid,
                 e
             );
-            // Optionally remove the invalid share: state.shares.remove(&uuid);
             // Treat most canonicalization errors as 'Not Found' or 'Forbidden' from client perspective
             if e.kind() == std::io::ErrorKind::NotFound {
                 return error_response(StatusCode::NOT_FOUND, "Shared file not found.");
@@ -515,6 +508,22 @@ async fn download_handler(
             }
         }
     }
+
+    // --- Get the file metadata first to determine Content-Length ---
+    let metadata = match tokio::fs::metadata(&path_to_serve).await {
+        Ok(meta) => meta,
+        Err(e) => {
+            error!(
+                "Failed to get metadata for file {}: {}",
+                path_to_serve.display(),
+                e
+            );
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Could not read file information for download.",
+            );
+        }
+    };
 
     // --- Serve the file ---
     match tokio::fs::File::open(&path_to_serve).await {
@@ -542,6 +551,14 @@ async fn download_handler(
                 HeaderValue::from_str(&mime_type) // Parse guessed mime type
                     .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")), // Fallback
             );
+
+            // Add Content-Length header with the file size
+            headers.insert(
+                header::CONTENT_LENGTH,
+                HeaderValue::from_str(&metadata.len().to_string())
+                    .unwrap_or_else(|_| HeaderValue::from_static("0")),
+            );
+
             headers.insert(
                 header::CONTENT_DISPOSITION,
                 // Properly format for attachment, handling potential quotes in filename if necessary later
@@ -560,7 +577,6 @@ async fn download_handler(
                 path_to_serve.display(),
                 e
             );
-            // Optionally remove the invalid share: state.shares.remove(&uuid);
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Could not read file for download.", // Generic error to client
