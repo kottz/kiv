@@ -445,8 +445,6 @@ async fn share_handler(
     })
 }
 
-// --- New Handler for Share Landing Page ---
-/// Serves a landing page for a shared file, showing metadata before download.
 async fn share_landing_handler(
     State(state): State<SharedState>,
     AxumPath(uuid): AxumPath<Uuid>,
@@ -568,70 +566,6 @@ async fn share_landing_handler(
                 meta name="viewport" content="width=device-width, initial-scale=1.0";
                 title { "Download " (filename) }
                 link rel="stylesheet" href="/static/styles.css";
-                // Add a small inline style block for landing page specific styles
-                style {
-                    r#"
-                    .download-card {
-                        background-color: #fff;
-                        padding: 25px;
-                        border-radius: 8px;
-                        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-                        max-width: 600px;
-                        margin: 40px auto;
-                    }
-                    .file-header {
-                        display: flex;
-                        align-items: center;
-                        margin-bottom: 20px;
-                    }
-                    .file-icon {
-                        font-size: 3em;
-                        margin-right: 20px;
-                    }
-                    .file-title h1 {
-                        margin: 0 0 5px 0;
-                        word-break: break-all;
-                    }
-                    .file-meta {
-                        margin: 20px 0;
-                        background-color: #f8f9fa;
-                        padding: 15px;
-                        border-radius: 6px;
-                    }
-                    .file-meta div {
-                        margin-bottom: 8px;
-                    }
-                    .file-meta strong {
-                        display: inline-block;
-                        width: 100px;
-                    }
-                    .download-button {
-                        display: block;
-                        width: 100%;
-                        padding: 15px;
-                        background-color: #4CAF50;
-                        color: white;
-                        border: none;
-                        border-radius: 4px;
-                        font-size: 1.1em;
-                        font-weight: bold;
-                        cursor: pointer;
-                        text-align: center;
-                        text-decoration: none;
-                        transition: background-color 0.3s;
-                    }
-                    .download-button:hover {
-                        background-color: #45a049;
-                        text-decoration: none;
-                    }
-                    .footer {
-                        text-align: center;
-                        margin-top: 20px;
-                        font-size: 0.8em;
-                        color: #666;
-                    }
-                    "#
-                }
             }
             body {
                 div class="download-card" {
@@ -667,6 +601,7 @@ async fn share_landing_handler(
     // Return the landing page
     markup.into_response()
 }
+
 /// Handles requests to download a shared file via its UUID.
 async fn download_handler(
     State(state): State<SharedState>,
