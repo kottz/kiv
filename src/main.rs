@@ -10,7 +10,7 @@ use clap::Parser;
 use dashmap::DashMap;
 use humansize::{format_size, BINARY};
 // --- Add Maud imports ---
-use maud::{html, Markup, DOCTYPE}; // PreEscaped might be useful sometimes but not strictly needed here
+use maud::{html, Markup, PreEscaped, DOCTYPE}; // PreEscaped might be useful sometimes but not strictly needed here
 use serde::{Deserialize, Serialize};
 use std::{
     fs::Metadata,
@@ -170,7 +170,10 @@ async fn root_handler() -> Markup {
                 title { "File Browser" }
                 link rel="stylesheet" href="/static/styles.css";
                 script src="/static/htmx.min.js" defer {}
+                // Script for the right-click context menu
                 script src="/static/context_menu.js" defer {}
+                // Script for the copy-to-clipboard functionality
+                script src="/static/copy_link.js" defer {}
             }
             body {
                 h1 { "File Browser" }
@@ -187,21 +190,25 @@ async fn root_handler() -> Markup {
                     div #file-list-container { "Loading files..." }
                 }
 
+                // Dedicated area for displaying the share link result via OOB swap
+                div #share-result-area {
+                    // Content will be swapped in here by the /share handler
+                }
+
                 // Context Menu Structure (hidden initially)
                 div #context-menu {
                     ul {
-                        // Target for share button/link display
+                        // Target for share button/link display (this li is still the default target)
                         li #context-share-target {
                              button #context-share
                                 hx-post="/share"
                                 hx-trigger="click"
-                                hx-target="#context-share-target" // Target self for replacement
+                                hx-target="#context-share-target" // Default target (will be replaced by empty content)
                                 hx-swap="innerHTML"
-                                // hx-vals will be set by JS
+                                // hx-vals set by context_menu.js
                                 { "🔗 Share File" }
                         }
                         // Add other context actions here if needed
-                        // e.g., li { "Download" }
                     }
                 }
             }
@@ -418,18 +425,13 @@ async fn browse_handler(
 
 /// Handles requests to create a share link for a file. Returns Maud Markup.
 async fn share_handler(
-    // --- ENSURE THIS IS PRESENT ---
-    State(state): State<SharedState>,
-    // --- AND THIS IS PRESENT ---
-    Form(payload): Form<SharePayload>,
+    State(state): State<SharedState>,  // Extract application state
+    Form(payload): Form<SharePayload>, // Extract form data
 ) -> Result<Markup, Response> {
-    // Return Result for error handling
-    // --- Now 'state' is in scope ---
     info!("Share requested for path: {}", payload.path);
 
     // --- Security: Path Validation ---
     let sanitized_req_path = sanitize_path(&payload.path);
-    // Use 'state' here
     let full_path = resolve_and_validate_path(&state.root_dir, &sanitized_req_path)?;
 
     if !full_path.is_file() {
@@ -442,20 +444,40 @@ async fn share_handler(
 
     // --- Generate Share Link ---
     let uuid = Uuid::new_v4();
-    // Use 'state' here
     state.shares.insert(uuid, full_path.clone());
-
     info!("Created share link {} for {}", uuid, full_path.display());
-
-    // Construct the URL the user will use
     let share_url = format!("/download/{}", uuid);
+    let input_id = format!("share-link-input-{}", uuid); // Create unique ID for input
 
-    // Return Maud Markup for the input field to be swapped into #context-share-target
+    // --- Create OOB Swap Response ---
     Ok(html! {
-        div #share-link-display { // Use the same ID as CSS expects
-            span { "Share Link:" }
-            // Readonly input, auto-select on click is good UX
-            input type="text" value=(share_url) readonly onclick="this.select();";
+        // 1. Default Swap Content (replaces #context-share-target)
+        //    This is empty, effectively removing the button after click.
+        { "" }
+
+        // 2. Out-of-Band Swap Content for #share-result-area
+        div #share-link-display // This specific block's container
+            hx-swap-oob="beforeend:#share-result-area" // Append inside the target area
+            style="margin-bottom: 10px;" // Add margin if appending multiple
+            {
+            span { "Share Link Generated:" }
+            input type="text"
+                  id=(input_id) // Use the unique ID
+                  value=(share_url)
+                  readonly;
+            // Copy button linked to the specific input ID
+            button class="copy-button"
+                   data-copy-target={"#"(input_id)} // Use selector syntax
+                   type="button" {
+                "Copy"
+            }
+            // Close button for this specific display block
+             button class="close-share-display"
+                    type="button"
+                    // Simple inline JS to remove this specific display block
+                    onclick="this.closest('#share-link-display').remove();" {
+                 (PreEscaped("×")) // Use HTML entity for '✕'
+            }
         }
     })
 }
