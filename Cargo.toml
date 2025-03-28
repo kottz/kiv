@@ -1,0 +1,26 @@
+[package]
+name = "axum-htmx-fileshare"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = { version = "0.7", features = ["macros"] }
+tokio = { version = "1", features = ["full"] }
+tower = { version = "0.4", features = ["util"] }
+tower-http = { version = "0.5", features = ["fs", "trace", "cors"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = { version = "1", features = ["v4", "serde"] }
+dashmap = "5.5" # For concurrent HashMap
+urlencoding = "2.1"
+bytes = "1"
+http = "1.0"
+clap = { version = "4", features = ["derive"] }
+mime_guess = "2.0"
+chrono = { version = "0.4", features = ["serde"] } # For timestamps
+humansize = "2.1" # For human-readable file sizes
+# --- Add Maud ---
+maud = { version = "0.26", features = ["axum"] } # Use latest version and enable axum feature
+tokio-util = { version = "0.7", features = ["io"] } # Needed for streaming download body

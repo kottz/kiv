@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>File Browser</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <script src="/static/htmx.min.js" defer></script>
+    <script src="/static/context_menu.js" defer></script>
+</head>
+<body>
+    <h1>File Browser</h1>
+
+    <div id="file-browser"
+         hx-get="/browse?path=."
+         hx-trigger="load"
+         hx-target="#file-list-container"
+         hx-swap="innerHTML">
+         <div id="current-path-container">Loading path...</div>
+         <div id="file-list-container">Loading files...</div>
+    </div>
+
+    <!-- Context Menu Structure (hidden initially) -->
+    <div id="context-menu">
+        <ul>
+            <!-- Target for share button/link display -->
+            <li id="context-share-target">
+                 <button id="context-share"
+                    hx-post="/share"
+                    hx-trigger="click"
+                    hx-target="#context-share-target"
+                    hx-swap="innerHTML"
+                    hx-vals=""> <!-- hx-vals will be set by JS -->
+                    🔗 Share File
+                </button>
+            </li>
+            <!-- Add other context actions here if needed -->
+            <!-- e.g., <li>Download</li> <li>Delete</li> -->
+        </ul>
+    </div>
+
+</body>
+</html>
