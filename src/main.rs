@@ -221,12 +221,10 @@ async fn browse_handler(
     State(state): State<SharedState>,
     Query(query): Query<BrowseQuery>,
 ) -> Result<Markup, Response> {
-    // Return Result<Markup, Response> for error handling
     let requested_path_str = query.path.unwrap_or_else(|| ".".to_string());
 
     // --- Security: Path Validation ---
     let sanitized_req_path = sanitize_path(&requested_path_str);
-    // `resolve_and_validate_path` returns `Result<PathBuf, Response>`
     let full_path = resolve_and_validate_path(&state.root_dir, &sanitized_req_path)?;
 
     if !full_path.is_dir() {
@@ -237,14 +235,14 @@ async fn browse_handler(
         ));
     }
 
-    // --- Read Directory Contents ---
+    // --- Read Directory Contents (Using the simpler, working approach) ---
     let mut entries = match fs::read_dir(&full_path).await {
         Ok(reader) => reader,
         Err(e) => {
             error!("Failed to read directory {}: {}", full_path.display(), e);
             return Err(error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "Error reading directory contents.", // Keep sensitive info out of response
+                "Error reading directory contents.",
             ));
         }
     };
@@ -252,171 +250,118 @@ async fn browse_handler(
     let mut dir_items = Vec::new();
     let mut file_items = Vec::new();
 
-    // Use loop instead of while let Some(Ok(entry)) = ... to handle potential errors per entry
-    loop {
-        match entries.next_entry().await {
-            Ok(Some(entry)) => {
-                let entry_path = entry.path();
-                // Skip entry if getting filename fails (unlikely but possible)
-                let name = match entry.file_name().into_string() {
-                    Ok(n) => n,
-                    Err(_) => {
-                        error!(
-                            "Skipping entry with non-UTF8 filename in {}",
-                            full_path.display()
-                        );
-                        continue; // Skip this entry
-                    }
+    // Use while let Some(Ok(entry)) for cleaner iteration if errors per entry are acceptable to skip
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let entry_path = entry.path();
+        let name = match entry.file_name().into_string() {
+            Ok(n) => n,
+            Err(_) => {
+                error!(
+                    "Skipping entry with non-UTF8 filename in {}",
+                    full_path.display()
+                );
+                continue; // Skip this entry if filename isn't valid UTF-8
+            }
+        };
+
+        // Calculate relative path
+        let relative_path = entry_path
+            .strip_prefix(&state.root_dir)
+            .unwrap() // Safe due to prior validation
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        match entry.metadata().await {
+            Ok(metadata) => {
+                let is_dir = metadata.is_dir();
+                let (size, modified) = get_metadata_strings(&metadata);
+
+                let item = DirEntryInfo {
+                    name,
+                    path: relative_path,
+                    is_dir,
+                    size,
+                    modified,
                 };
 
-                // Calculate relative path for client use (URL-safe separators)
-                // This unwrap is safe because full_path is canonicalized and within root_dir
-                let relative_path = entry_path
-                    .strip_prefix(&state.root_dir)
-                    .unwrap()
-                    .to_string_lossy()
-                    .replace('\\', "/");
-
-                match entry.metadata().await {
-                    Ok(metadata) => {
-                        let is_dir = metadata.is_dir();
-                        let (size, modified) = get_metadata_strings(&metadata);
-
-                        let item = DirEntryInfo {
-                            name,
-                            path: relative_path,
-                            is_dir,
-                            size,
-                            modified,
-                        };
-
-                        if is_dir {
-                            dir_items.push(item);
-                        } else {
-                            file_items.push(item);
-                        }
-                    }
-                    Err(e) => {
-                        error!(
-                            "Failed to get metadata for {}: {}",
-                            entry.path().display(),
-                            e
-                        );
-                        // Decide whether to skip or return an error. Skipping is often better UX.
-                        continue;
-                    }
+                if is_dir {
+                    dir_items.push(item);
+                } else {
+                    file_items.push(item);
                 }
             }
-            Ok(None) => break, // End of directory stream
             Err(e) => {
-                error!(
-                    "Error reading directory entry in {}: {}",
-                    full_path.display(),
-                    e
-                );
-                // Decide if this error is fatal for the whole listing or just skip
-                // For now, let's return an error for the request
-                return Err(error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "Error reading directory entry.",
-                ));
+                error!("Failed to get metadata for {}: {}", entry_path.display(), e);
+                // Skip entries where metadata fails
+                continue;
             }
         }
     }
 
-    // Sort directories and files alphabetically by name (case-insensitive)
+    // Sort directories and files alphabetically
     dir_items.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     file_items.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
     // --- Generate Maud Markup ---
     let current_display_path = if sanitized_req_path == Path::new(".") {
-        "/".to_string() // Display root as "/"
+        "/".to_string()
     } else {
-        // Ensure leading slash for display consistency, normalize separators
         format!(
             "/{}",
             sanitized_req_path.to_string_lossy().replace('\\', "/")
         )
     };
 
-    // This Markup will replace the content of #file-browser due to hx-target/hx-swap
     Ok(html! {
-        // --- Current Path Display ---
-        // This div *is part of* the swapped content for #file-browser
-        div #current-path-container { // Use the ID expected by CSS/JS if needed
+        div #current-path-container {
             div #current-path { "Current: " (current_display_path) }
         }
-
-        // --- File List Container ---
-        // This div also *is part of* the swapped content for #file-browser
         div #file-list-container {
             ul #file-list {
-                // "Go Up" Link (if not at root)
+                // "Go Up" Link (Correct logic from working version)
                 @if sanitized_req_path != Path::new(".") {
-                    // Calculate parent path relative to root
-                    @let parent_rel_path = sanitized_req_path
-                        .parent()
-                        .map(|p| p.to_string_lossy().replace('\\', "/")) // Normalize separators
-                        .unwrap_or_else(|| ".".to_string()); // Go to root if parent is root
+                    @let parent_rel_path = sanitized_req_path.parent().map(|p| p.to_string_lossy().replace('\\', "/")).unwrap_or_else(|| ".".to_string());
                     @let parent_url_encoded = urlencoding::encode(&parent_rel_path);
-
-                    // *** CORRECTED INTERPOLATION ***
-                    // Construct the hx-get value using format!
                     @let hx_get_value_up = format!("/browse?path={}", parent_url_encoded);
-
-                    // This list item triggers navigation UPWARDS
-                    li hx-get=(hx_get_value_up) // Use the formatted string directly
-                       hx-target="#file-browser"                 // Target the main container
-                       hx-swap="innerHTML"                       // Replace its content
-                       style="cursor: pointer;" { // Add cursor pointer for better UX
+                    li hx-get=(hx_get_value_up) hx-target="#file-browser" hx-swap="innerHTML" style="cursor: pointer;" {
                         span class="icon" { "⬆️" }
                         span { ".." }
                     }
                 }
 
-                // Directories
+                // Directories (Correct logic from working version)
                 @for item in &dir_items {
                     @let path_url_encoded = urlencoding::encode(&item.path);
-
-                    // *** CORRECTED INTERPOLATION ***
-                    // Construct the hx-get value using format!
                     @let hx_get_value_dir = format!("/browse?path={}", path_url_encoded);
-
-                    // This list item triggers navigation INTO the directory
-                    li data-path=(item.path) data-is-dir="true" // Data attributes for JS context menu
-                       hx-get=(hx_get_value_dir) // Use the formatted string directly
-                       hx-target="#file-browser"                 // Target the main container
-                       hx-swap="innerHTML"                       // Replace its content
-                       style="cursor: pointer;" { // Add cursor pointer
+                    li data-path=(item.path) data-is-dir="true" hx-get=(hx_get_value_dir) hx-target="#file-browser" hx-swap="innerHTML" style="cursor: pointer;" {
                        div {
                            span class="icon" { "📁" }
                            span { (item.name) }
                         }
-                       div class="file-info" { (item.modified.as_deref().unwrap_or("")) } // Display modification time
+                       div class="file-info" { (item.modified.as_deref().unwrap_or("")) }
                    }
                 }
 
-                // Files
+                // --- Files (Add ID and Placeholder DIV to working file logic) ---
                 @for item in &file_items {
-                    // Files are not directly navigable via hx-get in this setup
-                    // They are interactive via the right-click context menu
-                     li data-path=(item.path) data-is-dir="false" { // Data attributes for JS context menu
+                    // Create unique IDs
+                    @let item_id_base = item.path.replace(|c: char| !c.is_alphanumeric() && c != '-', "_");
+                    @let li_id = format!("file-item-{}", item_id_base);
+                    @let placeholder_id = format!("share-placeholder-{}", item_id_base);
+
+                     // Add id attribute here
+                     li #(li_id) data-path=(item.path) data-is-dir="false" {
                          div {
                             span class="icon" { "📄" }
                             span { (item.name) }
                          }
                          div class="file-info" {
-                             // Display size if available
-                             @if let Some(size) = &item.size {
-                                 span { (size) " " }
-                             }
-                             // Display modification time if available
-                             @if let Some(modified) = &item.modified {
-                                span { (modified) }
-                             }
-                             // Add more info here if needed
+                             @if let Some(size) = &item.size { span { (size) " " } }
+                             @if let Some(modified) = &item.modified { span { (modified) } }
                          }
                     }
+                    // Add the placeholder div immediately after the li
+                    div #(placeholder_id) class="share-link-placeholder" {}
                 }
             } // end ul
         } // end #file-list-container
@@ -425,8 +370,8 @@ async fn browse_handler(
 
 /// Handles requests to create a share link for a file. Returns Maud Markup.
 async fn share_handler(
-    State(state): State<SharedState>,  // Extract application state
-    Form(payload): Form<SharePayload>, // Extract form data
+    State(state): State<SharedState>,
+    Form(payload): Form<SharePayload>,
 ) -> Result<Markup, Response> {
     info!("Share requested for path: {}", payload.path);
 
@@ -439,46 +384,41 @@ async fn share_handler(
     state.shares.insert(uuid, full_path.clone());
     info!("Created share link {} for {}", uuid, full_path.display());
     let share_url = format!("/download/{}", uuid);
-    let popup_id = format!("share-popup-{}", uuid); // Unique ID for the popup div
-    let input_id = format!("share-link-input-{}", uuid); // Unique ID for input
 
-    // --- Create OOB Swap Response for a Floating Popup ---
+    // --- DETERMINE TARGET PLACEHOLDER ID ---
+    // Recreate the placeholder ID based on the path received in the payload
+    let item_id_base = payload
+        .path
+        .replace(|c: char| !c.is_alphanumeric() && c != '-', "_");
+    let target_placeholder_id = format!("share-placeholder-{}", item_id_base);
+    let input_id = format!("share-link-input-{}", uuid); // Unique ID for input remains useful
+
+    // --- Create OOB Swap Response Targeting Placeholder ---
     Ok(html! {
         // 1. Default Swap Content (replaces #context-share-target)
         //    Keep this empty to remove the original button.
         { "" }
 
-        // 2. Out-of-Band Swap Content - The Floating Popup
-        div #(popup_id) // Use the unique ID
-            class="share-link-popup" // Class for styling and JS detection
-            hx-swap-oob="beforeend:body" // Append this div to the end of the body
-            // Start positioned absolutely, but hidden. JS will set top/left and make visible.
-            // Add basic popup styling directly here or move to CSS.
-            style="position: absolute; visibility: hidden; z-index: 1001; background-color: #fff; padding: 15px; border: 1px solid #ccc; border-radius: 5px; box-shadow: 0 4px 8px rgba(0,0,0,0.2);"
+        // 2. Out-of-Band Swap Content - The Share Link Box
+        //    Use style="display: block;" or similar if needed, but CSS class is better
+        div class="share-link-inline-box" // New class for styling
+            hx-swap-oob={"innerHTML:#"(target_placeholder_id)} // TARGET THE SPECIFIC PLACEHOLDER
             {
-            // Content of the popup
-            span style="font-weight: bold; display: block; margin-bottom: 8px;" { "Share Link Generated:" }
-            div style="display: flex; align-items: center; gap: 10px;" {
+            span { "Share Link:" } // Simplified label
+            div style="display: flex; align-items: center; gap: 10px;" { // Inner flex container
                 input type="text"
                       id=(input_id)
                       value=(share_url)
-                      readonly
-                      style="flex-grow: 1; padding: 8px; border: 1px solid #ccc; border-radius: 3px; background-color: #f8f8f8;"; // Basic input styling
-
-                // Copy button linked to the specific input ID
+                      readonly;
                 button class="copy-button"
-                       data-copy-target={"#"(input_id)} // Use selector syntax
-                       type="button"
-                       style="padding: 8px 12px; border: 1px solid #ccc; background-color: #eee; border-radius: 3px; cursor: pointer; white-space: nowrap;"
-                       { "Copy" }
-
-                // Close button for this specific popup
-                 button class="close-popup"
+                       data-copy-target={"#"(input_id)}
+                       type="button" { "Copy" }
+                // Close button - needs to remove the parent inline box
+                 button class="close-inline-share"
                         type="button"
-                        // Use JS to find the parent popup by ID and remove it
-                        onclick={"document.getElementById('"(popup_id)"').remove();"}
-                        style="padding: 4px 8px; line-height: 1; border: 1px solid #ccc; background-color: #eee; border-radius: 3px; cursor: pointer;"
-                        { (PreEscaped("×")) } // HTML entity for '✕'
+                        // JS to clear the content of the placeholder div
+                        onclick={"document.getElementById('"(target_placeholder_id)"').innerHTML = '';"}
+                        { (PreEscaped("×")) }
             }
         }
     })

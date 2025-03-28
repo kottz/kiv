@@ -1,33 +1,36 @@
 document.addEventListener('DOMContentLoaded', () => {
     const contextMenu = document.getElementById('context-menu');
     const fileBrowser = document.getElementById('file-browser');
-    let currentContextItem = null;
-    // --- Variable to store coordinates of the share click ---
-    let lastShareClickCoords = null;
+    // No longer need currentContextItem or lastShareClickCoords for positioning
 
     // --- Show Context Menu ---
     fileBrowser.addEventListener('contextmenu', (event) => {
-        const targetLi = event.target.closest('li[data-path]');
+        const targetLi = event.target.closest('li[data-path][id]'); // Ensure it has an ID now
         if (targetLi) {
             event.preventDefault();
-            currentContextItem = targetLi;
+            // currentContextItem = targetLi; // Don't strictly need to store this anymore
 
             const path = targetLi.getAttribute('data-path');
             const isDir = targetLi.getAttribute('data-is-dir') === 'true';
             const shareButton = document.getElementById('context-share');
 
-            // Remove any existing popups when showing the context menu (optional cleanup)
-            // document.querySelectorAll('.share-link-popup').forEach(popup => popup.remove());
+            // --- Clear any previous share links when showing menu ---
+            // Find *all* placeholders and clear them
+            document.querySelectorAll('.share-link-placeholder').forEach(ph => {
+                ph.innerHTML = '';
+            });
 
             if (!isDir && shareButton) {
-                shareButton.setAttribute('hx-vals', `{"path": "${path}"}`);
-                shareButton.style.display = 'block';
-                // Ensure the target inside the context menu is visible/reset
+                // Reset the button state in the context menu
                 const shareTargetLi = document.getElementById('context-share-target');
                 if (shareTargetLi) {
-                    // Reset its content back to the button if it was replaced previously
-                    // (This might not be strictly needed if we always clear it in the response)
                     shareTargetLi.innerHTML = `<button id="context-share" hx-post="/share" hx-trigger="click" hx-target="#context-share-target" hx-swap="innerHTML" hx-vals='{"path": "${path}"}'>🔗 Share File</button>`;
+                }
+                // Get the potentially recreated button and ensure hx-vals is set
+                const newShareButton = document.getElementById('context-share');
+                if (newShareButton) {
+                    newShareButton.setAttribute('hx-vals', `{"path": "${path}"}`);
+                    newShareButton.style.display = 'block';
                 }
 
             } else if (shareButton) {
@@ -47,77 +50,49 @@ document.addEventListener('DOMContentLoaded', () => {
         if (contextMenu) {
             contextMenu.style.display = 'none';
         }
-        currentContextItem = null;
-        // Clear coords when menu is hidden generally
-        // lastShareClickCoords = null; // --> Don't clear here, need it for afterSwap
+        // No need to clear positioning vars
     }
 
-    // Hide menu on click elsewhere or scroll
+    // Hide menu on click elsewhere, scroll, escape
     document.addEventListener('click', (event) => {
-        if (contextMenu && !contextMenu.contains(event.target) && !event.target.closest('.share-link-popup')) {
-            // Also don't hide if clicking inside the new popup
+        // Don't hide menu if clicking inside the new inline share box
+        if (contextMenu && !contextMenu.contains(event.target) && !event.target.closest('.share-link-inline-box')) {
             hideContextMenu();
         }
-        // If clicking outside the popup *after* it appeared, maybe hide the popup too?
-        // else if (!event.target.closest('.share-link-popup') && document.querySelector('.share-link-popup')) {
-        //      document.querySelectorAll('.share-link-popup').forEach(popup => popup.remove());
-        // }
+        // Clicking outside the share box *could* close it - find the relevant placeholder and clear it? More complex.
+        // Let's rely on the 'x' button for now.
     });
     window.addEventListener('scroll', hideContextMenu, true);
     document.addEventListener('keydown', (event) => {
         if (event.key === 'Escape') {
             hideContextMenu();
-            // Also hide popups on Escape
-            document.querySelectorAll('.share-link-popup').forEach(popup => popup.remove());
+            // Also clear all placeholders on Escape
+            document.querySelectorAll('.share-link-placeholder').forEach(ph => {
+                ph.innerHTML = '';
+            });
         }
     });
 
-
-    // --- Store Coordinates on Share Click & Hide Menu ---
+    // --- Hide Menu Immediately on Share Click ---
     contextMenu.addEventListener('click', (event) => {
-        // Use closest() to ensure we catch clicks even on icons/spans inside the button
         const shareButtonClicked = event.target.closest('#context-share');
         if (shareButtonClicked) {
-            // Store the coordinates where the share button was clicked
-            lastShareClickCoords = { x: event.clientX, y: event.clientY };
-            // Let HTMX handle the POST, just hide the context menu after a short delay
-            setTimeout(hideContextMenu, 100); // Increased delay slightly
+            // No need to store coords
+            setTimeout(hideContextMenu, 50); // Hide quickly
         }
     });
 
-    // --- Position Popup After HTMX Swap ---
+    // --- Optional: Auto-select Text After Swap ---
     htmx.on('htmx:afterSwap', function(evt) {
-        // Check if a popup was potentially added by looking for the class
-        // Since we append to body, the swapped element might not be the popup itself.
-        // We need to find the *newly added* element. A common pattern is to look
-        // for the element by ID if the server included a unique ID.
-
-        // Let's try finding the *last* element with the popup class added to the body
-        const addedPopups = document.querySelectorAll('body > .share-link-popup:last-of-type');
-
-        if (addedPopups.length > 0 && lastShareClickCoords) {
-            const newPopup = addedPopups[addedPopups.length - 1]; // Get the most recently added one
-
-            // Adjust coordinates slightly if needed (e.g., offset from cursor)
-            const offsetX = 10;
-            const offsetY = 10;
-
-            // Position the popup near the stored coordinates
-            newPopup.style.left = `${lastShareClickCoords.x + offsetX}px`;
-            newPopup.style.top = `${lastShareClickCoords.y + offsetY}px`;
-            newPopup.style.visibility = 'visible'; // Make it visible
-
-            // Clear coords after use to prevent reusing for unrelated swaps
-            lastShareClickCoords = null;
-
-            // Auto-select input text within *this* specific popup
-            const input = newPopup.querySelector('input[type="text"]');
+        // Check if the swapped content contains our input based on the target
+        // The target of the OOB swap is the placeholder div
+        if (evt.detail.target && evt.detail.target.classList.contains('share-link-placeholder')) {
+            const input = evt.detail.target.querySelector('input[type="text"]');
             if (input) {
                 input.select();
             }
         }
-        // No need to check evt.detail.elt specifically if we search the body
     });
 
-    // Make sure the copy functionality still works (copy_link.js handles this)
+    // Ensure copy_link.js is still included and working
 });
