@@ -1,9 +1,8 @@
 use axum::{
-    extract::{Path as AxumPath, Query, State},
+    extract::{Form, Path as AxumPath, Query, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
-    response::{IntoResponse, Response}, // Keep IntoResponse and Response
+    response::{IntoResponse, Response},
     routing::{get, post},
-    Json,
     Router,
 };
 use chrono::prelude::*;
@@ -419,17 +418,18 @@ async fn browse_handler(
 
 /// Handles requests to create a share link for a file. Returns Maud Markup.
 async fn share_handler(
+    // --- ENSURE THIS IS PRESENT ---
     State(state): State<SharedState>,
-    // Use `Form` extractor if data comes from a standard form post,
-    // but `Json` is correct for `hx-vals` which sends JSON by default.
-    Json(payload): Json<SharePayload>,
+    // --- AND THIS IS PRESENT ---
+    Form(payload): Form<SharePayload>,
 ) -> Result<Markup, Response> {
     // Return Result for error handling
+    // --- Now 'state' is in scope ---
     info!("Share requested for path: {}", payload.path);
 
     // --- Security: Path Validation ---
     let sanitized_req_path = sanitize_path(&payload.path);
-    // `resolve_and_validate_path` returns `Result<PathBuf, Response>`
+    // Use 'state' here
     let full_path = resolve_and_validate_path(&state.root_dir, &sanitized_req_path)?;
 
     if !full_path.is_file() {
@@ -442,13 +442,12 @@ async fn share_handler(
 
     // --- Generate Share Link ---
     let uuid = Uuid::new_v4();
-    // Store the absolute, canonicalized path
+    // Use 'state' here
     state.shares.insert(uuid, full_path.clone());
 
     info!("Created share link {} for {}", uuid, full_path.display());
 
     // Construct the URL the user will use
-    // Consider making this configurable (e.g., base URL)
     let share_url = format!("/download/{}", uuid);
 
     // Return Maud Markup for the input field to be swapped into #context-share-target
