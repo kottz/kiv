@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Form, Path as AxumPath, Query, State},
+    extract::{Form, Host, Path as AxumPath, Query, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -373,42 +373,73 @@ async fn browse_handler(
     }) // end Ok(html!...)
 }
 
-/// Handles requests to create a share link for a file. Returns Maud Markup.
 async fn share_handler(
-    State(state): State<SharedState>,
-    Form(payload): Form<SharePayload>,
+    State(state): State<SharedState>,  // App state
+    Host(hostname): Host,              // Extract hostname (e.g., "localhost:3000")
+    Form(payload): Form<SharePayload>, // Form data (path)
 ) -> Result<Markup, Response> {
     info!("Share requested for path: {}", payload.path);
+    info!("Request received via host: {}", hostname); // Log the detected host
+
     let sanitized_req_path = sanitize_path(&payload.path);
     let full_path = resolve_and_validate_path(&state.root_dir, &sanitized_req_path)?;
-    if !full_path.is_file() { /* ... error ... */ }
+
+    if !full_path.is_file() {
+        error!("Share attempt on non-file: {}", full_path.display());
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "Sharing is only supported for files.",
+        ));
+    }
+
     let uuid = Uuid::new_v4();
     state.shares.insert(uuid, full_path.clone());
     info!("Created share link {} for {}", uuid, full_path.display());
-    let share_url = format!("/download/{}", uuid);
+
+    // --- Construct Full URL ---
+    // For simplicity, assume http. Detecting https often requires checking
+    // specific headers (like X-Forwarded-Proto) if behind a reverse proxy.
+    let scheme = "http"; // TODO: Make configurable or add HTTPS detection if needed
+    let base_url = format!("{}://{}", scheme, hostname);
+    let relative_url = format!("/download/{}", uuid);
+    let full_share_url = format!("{}{}", base_url, relative_url); // Combine base + relative
+    info!("Full share URL generated: {}", full_share_url);
+    // --- End Construct Full URL ---
+
+    // --- Determine Target Placeholder ID (same as before) ---
+    // Ensure this logic exactly matches the one in browse_handler for ID generation
     let item_id_base = payload
         .path
         .replace(|c: char| !c.is_alphanumeric() && c != '-', "_");
     let target_placeholder_id = format!("share-placeholder-{}", item_id_base);
-    info!("Targeting placeholder ID: {}", target_placeholder_id); // Keep log for debugging
     let input_id = format!("share-link-input-{}", uuid);
 
+    // --- Create OOB Swap Response Targeting Placeholder ---
     Ok(html! {
         // 1. Default Swap Content (targets #context-share-button-wrapper)
         //    Still empty to remove the button from the span.
         { "" }
 
-        // 2. Out-of-Band Swap Content (targets placeholder - unchanged)
-        div class="share-link-inline-box"
-            hx-swap-oob={"innerHTML:#"(target_placeholder_id)}
+        // 2. Out-of-Band Swap Content - The Share Link Box
+        div class="share-link-inline-box" // Class for styling
+            hx-swap-oob={"innerHTML:#"(target_placeholder_id)} // TARGET THE SPECIFIC PLACEHOLDER
             {
-            span { "Share Link:" }
-            div style="display: flex; align-items: center; gap: 10px;" {
-                input type="text" id=(input_id) value=(share_url) readonly;
-                button class="copy-button" data-copy-target={"#"(input_id)} type="button" { "Copy" }
-                button class="close-inline-share" type="button"
-                       onclick={"document.getElementById('"(target_placeholder_id)"').innerHTML = '';"}
-                       { (PreEscaped("×")) }
+            span { "Share Link:" } // Label
+            div style="display: flex; align-items: center; gap: 10px;" { // Inner flex container
+                input type="text"
+                      id=(input_id)
+                      // --- USE THE FULL URL HERE ---
+                      value=(full_share_url)
+                      readonly;
+                button class="copy-button"
+                       data-copy-target={"#"(input_id)}
+                       type="button" { "Copy" }
+                // Close button
+                 button class="close-inline-share"
+                        type="button"
+                        // JS to clear the content of the placeholder div
+                        onclick={"document.getElementById('"(target_placeholder_id)"').innerHTML = '';"}
+                        { (PreEscaped("×")) }
             }
         }
     })
