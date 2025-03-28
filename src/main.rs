@@ -128,11 +128,13 @@ async fn main() {
         .allow_origin(Any); // Allow any origin for simplicity, restrict in production
 
     // Build the Axum router
+    // Update the router in the main function to include the new routes:
     let app = Router::new()
         .route("/", get(root_handler)) // Uses Maud
         .route("/browse", get(browse_handler)) // Uses Maud
         .route("/share", post(share_handler)) // Uses Maud
-        .route("/download/:uuid", get(download_handler))
+        .route("/share/:uuid", get(share_landing_handler)) // New landing page handler
+        .route("/direct-download/:uuid", get(download_handler)) // Renamed direct download route
         // Serve static files (CSS, JS)
         .nest_service("/static", ServeDir::new("static"))
         // Add middleware
@@ -396,12 +398,10 @@ async fn share_handler(
     state.shares.insert(uuid, full_path.clone());
     info!("Created share link {} for {}", uuid, full_path.display());
 
-    // --- Construct Full URL ---
-    // For simplicity, assume http. Detecting https often requires checking
-    // specific headers (like X-Forwarded-Proto) if behind a reverse proxy.
+    // --- Construct Full URL to the landing page (not direct download) ---
     let scheme = "http"; // TODO: Make configurable or add HTTPS detection if needed
     let base_url = format!("{}://{}", scheme, hostname);
-    let relative_url = format!("/download/{}", uuid);
+    let relative_url = format!("/share/{}", uuid); // This now points to the landing page
     let full_share_url = format!("{}{}", base_url, relative_url); // Combine base + relative
     info!("Full share URL generated: {}", full_share_url);
     // --- End Construct Full URL ---
@@ -428,7 +428,7 @@ async fn share_handler(
             div style="display: flex; align-items: center; gap: 10px;" { // Inner flex container
                 input type="text"
                       id=(input_id)
-                      // --- USE THE FULL URL HERE ---
+                      // --- NOW USING THE LANDING PAGE URL ---
                       value=(full_share_url)
                       readonly;
                 button class="copy-button"
@@ -445,6 +445,228 @@ async fn share_handler(
     })
 }
 
+// --- New Handler for Share Landing Page ---
+/// Serves a landing page for a shared file, showing metadata before download.
+async fn share_landing_handler(
+    State(state): State<SharedState>,
+    AxumPath(uuid): AxumPath<Uuid>,
+) -> Response {
+    info!("Share landing page requested for UUID: {}", uuid);
+
+    // --- Look up the shared path ---
+    let path_to_serve = match state.shares.get(&uuid) {
+        Some(path_ref) => path_ref.value().clone(),
+        None => {
+            info!("Share link not found: {}", uuid);
+            return error_response(StatusCode::NOT_FOUND, "Invalid or expired share link.");
+        }
+    };
+
+    info!("Showing landing page for: {}", path_to_serve.display());
+
+    // --- Security: Re-validate the path ---
+    match path_to_serve.canonicalize() {
+        Ok(canonical_path_now) => {
+            // Ensure it's still within the root directory
+            if !canonical_path_now.starts_with(&state.root_dir) {
+                error!(
+                    "Shared path {} resolved outside root {} for landing page (UUID: {}).",
+                    path_to_serve.display(),
+                    state.root_dir.display(),
+                    uuid
+                );
+                return error_response(StatusCode::FORBIDDEN, "Access denied.");
+            }
+            // Ensure it's still a file
+            if !canonical_path_now.is_file() {
+                error!(
+                    "Shared path {} is no longer a file (UUID: {}).",
+                    canonical_path_now.display(),
+                    uuid
+                );
+                return error_response(
+                    StatusCode::NOT_FOUND,
+                    "Shared item is no longer accessible as a file.",
+                );
+            }
+        }
+        Err(e) => {
+            error!(
+                "Failed to validate path {} for landing page (UUID: {}): {}",
+                path_to_serve.display(),
+                uuid,
+                e
+            );
+            if e.kind() == std::io::ErrorKind::NotFound {
+                return error_response(StatusCode::NOT_FOUND, "Shared file not found.");
+            } else {
+                return error_response(StatusCode::FORBIDDEN, "Cannot access shared file.");
+            }
+        }
+    }
+
+    // --- Gather file metadata ---
+    let metadata = match tokio::fs::metadata(&path_to_serve).await {
+        Ok(meta) => meta,
+        Err(e) => {
+            error!(
+                "Failed to get metadata for shared file {}: {}",
+                path_to_serve.display(),
+                e
+            );
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Could not read file information.",
+            );
+        }
+    };
+
+    // Extract filename
+    let filename = path_to_serve
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("Unknown file")
+        .to_string();
+
+    // Extract file extension for icon display
+    let extension = path_to_serve
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    // Determine icon based on file extension
+    let file_icon = match extension.as_str() {
+        "pdf" => "📄",
+        "doc" | "docx" => "📝",
+        "xls" | "xlsx" => "📊",
+        "ppt" | "pptx" => "📑",
+        "jpg" | "jpeg" | "png" | "gif" | "bmp" | "svg" => "🖼️",
+        "mp3" | "wav" | "flac" | "ogg" => "🎵",
+        "mp4" | "avi" | "mov" | "mkv" | "webm" => "🎬",
+        "zip" | "rar" | "7z" | "tar" | "gz" => "🗄️",
+        "txt" | "md" | "rst" => "📄",
+        "html" | "htm" | "css" | "js" => "🌐",
+        "exe" | "msi" | "dmg" | "app" => "📦",
+        _ => "📄", // Default file icon
+    };
+
+    // Get size and modification time
+    let (size, modified) = get_metadata_strings(&metadata);
+
+    // Get mime type
+    let mime_type = mime_guess::from_path(&path_to_serve)
+        .first_or_octet_stream()
+        .to_string();
+
+    // Generate the landing page markup
+    let markup = html! {
+        (DOCTYPE)
+        html lang="en" {
+            head {
+                meta charset="UTF-8";
+                meta name="viewport" content="width=device-width, initial-scale=1.0";
+                title { "Download " (filename) }
+                link rel="stylesheet" href="/static/styles.css";
+                // Add a small inline style block for landing page specific styles
+                style {
+                    r#"
+                    .download-card {
+                        background-color: #fff;
+                        padding: 25px;
+                        border-radius: 8px;
+                        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+                        max-width: 600px;
+                        margin: 40px auto;
+                    }
+                    .file-header {
+                        display: flex;
+                        align-items: center;
+                        margin-bottom: 20px;
+                    }
+                    .file-icon {
+                        font-size: 3em;
+                        margin-right: 20px;
+                    }
+                    .file-title h1 {
+                        margin: 0 0 5px 0;
+                        word-break: break-all;
+                    }
+                    .file-meta {
+                        margin: 20px 0;
+                        background-color: #f8f9fa;
+                        padding: 15px;
+                        border-radius: 6px;
+                    }
+                    .file-meta div {
+                        margin-bottom: 8px;
+                    }
+                    .file-meta strong {
+                        display: inline-block;
+                        width: 100px;
+                    }
+                    .download-button {
+                        display: block;
+                        width: 100%;
+                        padding: 15px;
+                        background-color: #4CAF50;
+                        color: white;
+                        border: none;
+                        border-radius: 4px;
+                        font-size: 1.1em;
+                        font-weight: bold;
+                        cursor: pointer;
+                        text-align: center;
+                        text-decoration: none;
+                        transition: background-color 0.3s;
+                    }
+                    .download-button:hover {
+                        background-color: #45a049;
+                        text-decoration: none;
+                    }
+                    .footer {
+                        text-align: center;
+                        margin-top: 20px;
+                        font-size: 0.8em;
+                        color: #666;
+                    }
+                    "#
+                }
+            }
+            body {
+                div class="download-card" {
+                    div class="file-header" {
+                        div class="file-icon" { (file_icon) }
+                        div class="file-title" {
+                            h1 { (filename) }
+                        }
+                    }
+
+                    div class="file-meta" {
+                        @if let Some(size_str) = &size {
+                            div { strong { "Size:" } (size_str) }
+                        }
+                        @if let Some(mod_str) = &modified {
+                            div { strong { "Modified:" } (mod_str) }
+                        }
+                        div { strong { "Type:" } (mime_type) }
+                    }
+
+                    a href={"/direct-download/"(uuid)} class="download-button" {
+                        "Download File"
+                    }
+
+                    div class="footer" {
+                        "This file has been shared with you securely. Click the Download button to save it to your device."
+                    }
+                }
+            }
+        }
+    };
+
+    // Return the landing page
+    markup.into_response()
+}
 /// Handles requests to download a shared file via its UUID.
 async fn download_handler(
     State(state): State<SharedState>,
