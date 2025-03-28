@@ -1,91 +1,140 @@
+// static/context_menu.js
+
 document.addEventListener('DOMContentLoaded', () => {
     const contextMenu = document.getElementById('context-menu');
     const fileBrowser = document.getElementById('file-browser');
-    // No longer need currentContextItem or lastShareClickCoords for positioning
 
-    // --- Show Context Menu ---
+    // Helper to generate placeholder ID based on path (must match Rust logic)
+    function getTargetPlaceholderId(path) {
+        if (!path) return null;
+        // Replace non-alphanumeric characters (excluding hyphen) with underscore
+        // Added 'g' flag for global replace, just in case.
+        const itemIdBase = path.replace(/[^a-zA-Z0-9-]/g, "_");
+        return `share-placeholder-${itemIdBase}`;
+    }
+
+    // --- Function to Hide Context Menu ---
+    function hideContextMenu() {
+        if (contextMenu && contextMenu.style.display !== 'none') {
+            // console.log("Hiding context menu."); // Uncomment for debugging
+            contextMenu.style.display = 'none';
+        }
+    }
+
+    // --- Show Context Menu on Right-Click ---
     fileBrowser.addEventListener('contextmenu', (event) => {
-        const targetLi = event.target.closest('li[data-path][id]'); // Ensure it has an ID now
+        const targetLi = event.target.closest('li[data-path][id]'); // File/Dir List Item
         if (targetLi) {
             event.preventDefault();
-            // currentContextItem = targetLi; // Don't strictly need to store this anymore
 
             const path = targetLi.getAttribute('data-path');
             const isDir = targetLi.getAttribute('data-is-dir') === 'true';
-            const shareButton = document.getElementById('context-share');
+            const shareTargetLi = document.getElementById('context-share-target'); // The parent LI
+            const shareButtonWrapper = document.getElementById('context-share-button-wrapper'); // The inner SPAN
 
-            // --- Clear any previous share links when showing menu ---
-            // Find *all* placeholders and clear them
+            // --- Basic structural check ---
+            if (!shareTargetLi || !shareButtonWrapper) {
+                console.error("Context menu structure elements (#context-share-target or #context-share-button-wrapper) missing!");
+                hideContextMenu(); // Hide if structure is broken
+                return;
+            }
+
+            // --- Clear ALL previous inline share links ---
+            // Ensures only one share box is visible at a time
+            // console.log("Clearing all .share-link-placeholder divs"); // Uncomment for debugging
             document.querySelectorAll('.share-link-placeholder').forEach(ph => {
                 ph.innerHTML = '';
             });
 
-            if (!isDir && shareButton) {
-                // Reset the button state in the context menu
-                const shareTargetLi = document.getElementById('context-share-target');
-                if (shareTargetLi) {
-                    shareTargetLi.innerHTML = `<button id="context-share" hx-post="/share" hx-trigger="click" hx-target="#context-share-target" hx-swap="innerHTML" hx-vals='{"path": "${path}"}'>🔗 Share File</button>`;
-                }
-                // Get the potentially recreated button and ensure hx-vals is set
-                const newShareButton = document.getElementById('context-share');
-                if (newShareButton) {
-                    newShareButton.setAttribute('hx-vals', `{"path": "${path}"}`);
-                    newShareButton.style.display = 'block';
-                }
+            // --- Logic for files: Ensure button exists and is configured ---
+            if (!isDir) {
+                // Recreate button HTML inside the wrapper span to ensure it's fresh
+                // and HTMX attributes are correctly defined before processing
+                const buttonHTML = `<button id="context-share"
+                                            hx-post="/share"
+                                            hx-trigger="click"
+                                            hx-target="#context-share-button-wrapper"
+                                            hx-swap="innerHTML"
+                                            hx-vals="">
+                                       🔗 Share File
+                                    </button>`;
+                shareButtonWrapper.innerHTML = buttonHTML;
 
-            } else if (shareButton) {
-                shareButton.style.display = 'none';
+                // Find the newly created button
+                const shareButton = shareButtonWrapper.querySelector('#context-share');
+
+                if (shareButton) {
+                    // Set the dynamic path value
+                    shareButton.setAttribute('hx-vals', `{"path": "${path}"}`);
+
+                    // IMPORTANT: Ensure HTMX processes this newly added element
+                    htmx.process(shareButtonWrapper);
+
+                } else {
+                    console.error("Error: Failed to find #context-share button after recreating it.");
+                }
+                // Make sure the LI containing the share button is visible
+                shareTargetLi.style.display = '';
+
+                // --- Logic for directories: Hide the share option ---
+            } else {
+                shareTargetLi.style.display = 'none'; // Hide the whole LI
+                shareButtonWrapper.innerHTML = ''; // Clear any button remnants
             }
 
-            contextMenu.style.top = `${event.clientY}px`;
-            contextMenu.style.left = `${event.clientX}px`;
+            // --- Position and show context menu ---
+            // Calculate position relative to the document, including scroll offsets
+            const menuTop = event.clientY + window.scrollY;
+            const menuLeft = event.clientX + window.scrollX;
+
+            contextMenu.style.top = `${menuTop}px`;
+            contextMenu.style.left = `${menuLeft}px`;
             contextMenu.style.display = 'block';
+
         } else {
+            // Click was not on a valid file/dir list item
             hideContextMenu();
         }
     });
 
-    // --- Hide Context Menu ---
-    function hideContextMenu() {
-        if (contextMenu) {
-            contextMenu.style.display = 'none';
-        }
-        // No need to clear positioning vars
-    }
 
-    // Hide menu on click elsewhere, scroll, escape
+    // --- Hide Menu on Standard Actions (Click Outside, Scroll, Escape) ---
     document.addEventListener('click', (event) => {
-        // Don't hide menu if clicking inside the new inline share box
-        if (contextMenu && !contextMenu.contains(event.target) && !event.target.closest('.share-link-inline-box')) {
+        // If menu is visible AND click is outside menu AND click is outside any inline share box...
+        if (contextMenu.style.display === 'block' &&
+            !contextMenu.contains(event.target) &&
+            !event.target.closest('.share-link-inline-box')) {
             hideContextMenu();
         }
-        // Clicking outside the share box *could* close it - find the relevant placeholder and clear it? More complex.
-        // Let's rely on the 'x' button for now.
     });
+    // Use capture phase for scroll to catch it early and hide the menu
     window.addEventListener('scroll', hideContextMenu, true);
     document.addEventListener('keydown', (event) => {
         if (event.key === 'Escape') {
             hideContextMenu();
-            // Also clear all placeholders on Escape
+            // Also clear placeholders on Escape for good measure
             document.querySelectorAll('.share-link-placeholder').forEach(ph => {
                 ph.innerHTML = '';
             });
         }
     });
 
-    // --- Hide Menu Immediately on Share Click ---
-    contextMenu.addEventListener('click', (event) => {
+    // --- Hide Menu Immediately on Share Button Click (using direct listener) ---
+    // Attach listener directly to the context menu element for reliability
+    contextMenu.addEventListener('click', function(event) {
+        // Check if the actual clicked element or its parent is the share button
         const shareButtonClicked = event.target.closest('#context-share');
         if (shareButtonClicked) {
-            // No need to store coords
-            setTimeout(hideContextMenu, 50); // Hide quickly
+            // console.log("Share button clicked inside context menu, hiding menu."); // Uncomment for debugging
+            hideContextMenu(); // Hide immediately, no timeout needed
         }
     });
 
-    // --- Optional: Auto-select Text After Swap ---
+
+    // --- Auto-select Text After Swap ---
+    // This remains useful for the inline share box input
     htmx.on('htmx:afterSwap', function(evt) {
-        // Check if the swapped content contains our input based on the target
-        // The target of the OOB swap is the placeholder div
+        // Check the target of the swap (the placeholder div)
         if (evt.detail.target && evt.detail.target.classList.contains('share-link-placeholder')) {
             const input = evt.detail.target.querySelector('input[type="text"]');
             if (input) {
@@ -94,5 +143,5 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Ensure copy_link.js is still included and working
+    // Ensure copy_link.js handles clicks on .copy-button (loaded separately via HTML)
 });

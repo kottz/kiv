@@ -198,17 +198,22 @@ async fn root_handler() -> Markup {
                 // Context Menu Structure (hidden initially)
                 div #context-menu {
                     ul {
-                        // Target for share button/link display (this li is still the default target)
+                        // The LI is the main container for the share action
                         li #context-share-target {
-                             button #context-share
-                                hx-post="/share"
-                                hx-trigger="click"
-                                hx-target="#context-share-target" // Default target (will be replaced by empty content)
-                                hx-swap="innerHTML"
-                                // hx-vals set by context_menu.js
-                                { "🔗 Share File" }
+                            // --- ADD SPAN WRAPPER ---
+                            // This span will be the target for the default swap
+                            span #context-share-button-wrapper {
+                                // The initial button lives inside the span
+                                button #context-share
+                                    hx-post="/share"
+                                    hx-trigger="click"
+                                    // --- CHANGE DEFAULT TARGET ---
+                                    hx-target="#context-share-button-wrapper" // Target the span
+                                    hx-swap="innerHTML" // Replace span content (the button)
+                                    // hx-vals set by context_menu.js
+                                    { "🔗 Share File" }
+                           } // --- END SPAN WRAPPER ---
                         }
-                        // Add other context actions here if needed
                     }
                 }
             }
@@ -374,51 +379,36 @@ async fn share_handler(
     Form(payload): Form<SharePayload>,
 ) -> Result<Markup, Response> {
     info!("Share requested for path: {}", payload.path);
-
     let sanitized_req_path = sanitize_path(&payload.path);
     let full_path = resolve_and_validate_path(&state.root_dir, &sanitized_req_path)?;
-
-    if !full_path.is_file() { /* ... error handling ... */ }
-
+    if !full_path.is_file() { /* ... error ... */ }
     let uuid = Uuid::new_v4();
     state.shares.insert(uuid, full_path.clone());
     info!("Created share link {} for {}", uuid, full_path.display());
     let share_url = format!("/download/{}", uuid);
-
-    // --- DETERMINE TARGET PLACEHOLDER ID ---
-    // Recreate the placeholder ID based on the path received in the payload
     let item_id_base = payload
         .path
         .replace(|c: char| !c.is_alphanumeric() && c != '-', "_");
     let target_placeholder_id = format!("share-placeholder-{}", item_id_base);
-    let input_id = format!("share-link-input-{}", uuid); // Unique ID for input remains useful
+    info!("Targeting placeholder ID: {}", target_placeholder_id); // Keep log for debugging
+    let input_id = format!("share-link-input-{}", uuid);
 
-    // --- Create OOB Swap Response Targeting Placeholder ---
     Ok(html! {
-        // 1. Default Swap Content (replaces #context-share-target)
-        //    Keep this empty to remove the original button.
+        // 1. Default Swap Content (targets #context-share-button-wrapper)
+        //    Still empty to remove the button from the span.
         { "" }
 
-        // 2. Out-of-Band Swap Content - The Share Link Box
-        //    Use style="display: block;" or similar if needed, but CSS class is better
-        div class="share-link-inline-box" // New class for styling
-            hx-swap-oob={"innerHTML:#"(target_placeholder_id)} // TARGET THE SPECIFIC PLACEHOLDER
+        // 2. Out-of-Band Swap Content (targets placeholder - unchanged)
+        div class="share-link-inline-box"
+            hx-swap-oob={"innerHTML:#"(target_placeholder_id)}
             {
-            span { "Share Link:" } // Simplified label
-            div style="display: flex; align-items: center; gap: 10px;" { // Inner flex container
-                input type="text"
-                      id=(input_id)
-                      value=(share_url)
-                      readonly;
-                button class="copy-button"
-                       data-copy-target={"#"(input_id)}
-                       type="button" { "Copy" }
-                // Close button - needs to remove the parent inline box
-                 button class="close-inline-share"
-                        type="button"
-                        // JS to clear the content of the placeholder div
-                        onclick={"document.getElementById('"(target_placeholder_id)"').innerHTML = '';"}
-                        { (PreEscaped("×")) }
+            span { "Share Link:" }
+            div style="display: flex; align-items: center; gap: 10px;" {
+                input type="text" id=(input_id) value=(share_url) readonly;
+                button class="copy-button" data-copy-target={"#"(input_id)} type="button" { "Copy" }
+                button class="close-inline-share" type="button"
+                       onclick={"document.getElementById('"(target_placeholder_id)"').innerHTML = '';"}
+                       { (PreEscaped("×")) }
             }
         }
     })
