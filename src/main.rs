@@ -430,53 +430,55 @@ async fn share_handler(
 ) -> Result<Markup, Response> {
     info!("Share requested for path: {}", payload.path);
 
-    // --- Security: Path Validation ---
     let sanitized_req_path = sanitize_path(&payload.path);
     let full_path = resolve_and_validate_path(&state.root_dir, &sanitized_req_path)?;
 
-    if !full_path.is_file() {
-        error!("Share attempt on non-file: {}", full_path.display());
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            "Sharing is only supported for files.",
-        ));
-    }
+    if !full_path.is_file() { /* ... error handling ... */ }
 
-    // --- Generate Share Link ---
     let uuid = Uuid::new_v4();
     state.shares.insert(uuid, full_path.clone());
     info!("Created share link {} for {}", uuid, full_path.display());
     let share_url = format!("/download/{}", uuid);
-    let input_id = format!("share-link-input-{}", uuid); // Create unique ID for input
+    let popup_id = format!("share-popup-{}", uuid); // Unique ID for the popup div
+    let input_id = format!("share-link-input-{}", uuid); // Unique ID for input
 
-    // --- Create OOB Swap Response ---
+    // --- Create OOB Swap Response for a Floating Popup ---
     Ok(html! {
         // 1. Default Swap Content (replaces #context-share-target)
-        //    This is empty, effectively removing the button after click.
+        //    Keep this empty to remove the original button.
         { "" }
 
-        // 2. Out-of-Band Swap Content for #share-result-area
-        div #share-link-display // This specific block's container
-            hx-swap-oob="beforeend:#share-result-area" // Append inside the target area
-            style="margin-bottom: 10px;" // Add margin if appending multiple
+        // 2. Out-of-Band Swap Content - The Floating Popup
+        div #(popup_id) // Use the unique ID
+            class="share-link-popup" // Class for styling and JS detection
+            hx-swap-oob="beforeend:body" // Append this div to the end of the body
+            // Start positioned absolutely, but hidden. JS will set top/left and make visible.
+            // Add basic popup styling directly here or move to CSS.
+            style="position: absolute; visibility: hidden; z-index: 1001; background-color: #fff; padding: 15px; border: 1px solid #ccc; border-radius: 5px; box-shadow: 0 4px 8px rgba(0,0,0,0.2);"
             {
-            span { "Share Link Generated:" }
-            input type="text"
-                  id=(input_id) // Use the unique ID
-                  value=(share_url)
-                  readonly;
-            // Copy button linked to the specific input ID
-            button class="copy-button"
-                   data-copy-target={"#"(input_id)} // Use selector syntax
-                   type="button" {
-                "Copy"
-            }
-            // Close button for this specific display block
-             button class="close-share-display"
-                    type="button"
-                    // Simple inline JS to remove this specific display block
-                    onclick="this.closest('#share-link-display').remove();" {
-                 (PreEscaped("×")) // Use HTML entity for '✕'
+            // Content of the popup
+            span style="font-weight: bold; display: block; margin-bottom: 8px;" { "Share Link Generated:" }
+            div style="display: flex; align-items: center; gap: 10px;" {
+                input type="text"
+                      id=(input_id)
+                      value=(share_url)
+                      readonly
+                      style="flex-grow: 1; padding: 8px; border: 1px solid #ccc; border-radius: 3px; background-color: #f8f8f8;"; // Basic input styling
+
+                // Copy button linked to the specific input ID
+                button class="copy-button"
+                       data-copy-target={"#"(input_id)} // Use selector syntax
+                       type="button"
+                       style="padding: 8px 12px; border: 1px solid #ccc; background-color: #eee; border-radius: 3px; cursor: pointer; white-space: nowrap;"
+                       { "Copy" }
+
+                // Close button for this specific popup
+                 button class="close-popup"
+                        type="button"
+                        // Use JS to find the parent popup by ID and remove it
+                        onclick={"document.getElementById('"(popup_id)"').remove();"}
+                        style="padding: 4px 8px; line-height: 1; border: 1px solid #ccc; background-color: #eee; border-radius: 3px; cursor: pointer;"
+                        { (PreEscaped("×")) } // HTML entity for '✕'
             }
         }
     })

@@ -4,65 +4,105 @@ body {
     background-color: #f4f4f4;
 }
 
+h1 {
+    text-align: center;
+    color: #333;
+}
+
+/* --- File Browser --- */
 #file-browser {
     background-color: #fff;
     padding: 15px;
     border-radius: 5px;
     box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    max-width: 900px; /* Optional: constrain width */
+    margin: 20px auto; /* Center the browser */
+}
+
+#current-path-container { /* Container holding the current path display */
+     margin-bottom: 10px;
+     padding-bottom: 10px;
+     border-bottom: 1px solid #eee;
 }
 
 #current-path {
     font-weight: bold;
-    margin-bottom: 10px;
-    padding-bottom: 10px;
-    border-bottom: 1px solid #eee;
     word-wrap: break-word; /* Prevent long paths from overflowing */
 }
 
-ul {
-    list-style: none;
-    padding: 0;
+#file-list-container { /* Container for the actual list */
+    /* No specific styles needed unless for overflow/height */
 }
 
-li {
-    padding: 8px 5px;
+#file-list {
+    list-style: none;
+    padding: 0;
+    margin: 0; /* Remove default ul margin */
+}
+
+#file-list li {
+    padding: 8px 10px; /* Increased padding slightly */
     border-bottom: 1px solid #eee;
-    cursor: pointer;
+    cursor: default; /* Default cursor for files */
     display: flex;
     justify-content: space-between;
     align-items: center;
+    transition: background-color 0.2s ease; /* Smooth hover effect */
 }
 
-li:last-child {
+/* Apply pointer cursor specifically to clickable items (dirs and '..') */
+#file-list li[hx-get] {
+    cursor: pointer;
+}
+
+
+#file-list li:last-child {
     border-bottom: none;
 }
 
-li:hover {
+#file-list li:hover {
     background-color: #e9e9e9;
 }
 
-li span {
-    margin-right: 10px;
+/* Container for icon + name */
+#file-list li > div:first-child {
+    display: flex;
+    align-items: center;
 }
 
-li .actions {
-    display: none; /* Hide actions initially */
-    /* We will show this via context menu logic if needed */
+
+#file-list li span {
+    /* Remove margin-right here, rely on gap or icon margin */
+}
+
+/* File/Folder name */
+#file-list li > div:first-child span:last-child {
+     word-break: break-all; /* Break long filenames */
+}
+
+
+#file-list li .actions {
+    display: none; /* Hide actions initially, context menu handles this */
     margin-left: auto; /* Push actions to the right */
 }
 
- li .file-info {
+/* Size/Date info */
+#file-list li .file-info {
     color: #666;
     font-size: 0.9em;
-    margin-left: 15px; /* Space between name and info */
+    margin-left: 15px; /* Space between name area and info area */
+    white-space: nowrap; /* Prevent wrapping of size/date */
+    text-align: right; /* Align info to the right */
+    min-width: 150px; /* Give it some space */
  }
 
 
 .icon {
     margin-right: 8px;
-    width: 1.2em; /* Adjust size as needed */
+    width: 1.3em; /* Adjust size as needed */
     display: inline-block;
     text-align: center;
+    vertical-align: middle; /* Align icons better with text */
 }
 
 a {
@@ -83,7 +123,7 @@ a:hover {
     box-shadow: 2px 2px 5px rgba(0,0,0,0.2);
     padding: 5px 0;
     min-width: 150px;
-    z-index: 1000; /* Ensure it's on top */
+    z-index: 1000; /* Ensure it's on top (but below popup) */
 }
 
 #context-menu ul {
@@ -96,92 +136,100 @@ a:hover {
     padding: 8px 15px;
     cursor: pointer;
     border-bottom: none; /* Override general li style */
+    background-color: transparent; /* Override hover from file list if needed */
+    transition: background-color 0.2s ease;
 }
 
  #context-menu li:hover {
     background-color: #e9e9e9;
  }
 
-#share-link-display {
-    margin-top: 10px;
-    padding: 10px;
-    background-color: #f0f0f0;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-}
+ /* Specifically style the button inside the context menu */
+ #context-menu button {
+    border: none;
+    background: none;
+    padding: 0;
+    margin: 0;
+    font: inherit; /* Inherit text styles from parent li */
+    color: inherit;
+    cursor: pointer;
+    text-align: left; /* Align button text */
+    width: 100%; /* Make button fill the li */
+ }
 
-#share-link-display input {
-    width: 100%;
-    padding: 5px;
-    border: 1px solid #bbb;
-    box-sizing: border-box; /* Include padding and border in the element's total width and height */
-}
 
-#share-result-area {
-    margin-top: 20px;
+/* --- Share Link Floating Popup --- */
+.share-link-popup {
+    position: absolute;
+    visibility: hidden; /* Start hidden - JS makes it visible */
+    z-index: 1001;      /* Ensure it's above context menu and most other content */
+    background-color: #fff;
     padding: 15px;
-    background-color: #e7f3ff; /* Light blue background */
-    border: 1px solid #b3d7ff; /* Blue border */
+    border: 1px solid #ccc;
     border-radius: 5px;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    min-width: 300px; /* Give it some minimum width */
+    max-width: 500px; /* And a max width */
 }
 
-#share-result-area:empty {
-    display: none; /* Hide the area if it's empty */
+.share-link-popup span {
+    font-weight: bold;
+    display: block; /* Make span take full width */
+    margin-bottom: 8px;
+    color: #333;
 }
 
-
-/* Style for each generated link display block */
-#share-link-display {
+/* Container for input+buttons inside popup */
+.share-link-popup > div {
     display: flex;
     align-items: center;
-    gap: 10px; /* Spacing between elements */
-    margin-bottom: 10px; /* Space below each link if multiple appear */
-    padding: 10px;
-    background-color: #fff;
-    border-radius: 4px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    gap: 10px; /* Spacing between input and buttons */
 }
 
-#share-link-display span {
-    font-weight: bold;
-    white-space: nowrap; /* Prevent wrapping */
-}
 
-#share-link-display input[type="text"] {
+.share-link-popup input[type="text"] {
     flex-grow: 1; /* Allow input to take available space */
     padding: 8px;
+    font-size: 0.95em;
     border: 1px solid #ccc;
     border-radius: 3px;
-    background-color: #f8f8f8; /* Slightly different bg for readonly */
+    background-color: #f8f8f8; /* Indicate readonly */
+    box-sizing: border-box;
 }
 
-#share-link-display button {
+.share-link-popup button {
     padding: 8px 12px;
-    border: 1px solid #ccc;
+    border: 1px solid #aaa; /* Slightly darker border */
     background-color: #eee;
     border-radius: 3px;
     cursor: pointer;
-    white-space: nowrap;
+    white-space: nowrap; /* Prevent button text wrapping */
+    font-size: 0.9em;
+    transition: background-color 0.2s ease;
 }
 
-#share-link-display button:hover {
+.share-link-popup button:hover {
     background-color: #ddd;
 }
 
-#share-link-display button.copy-button:disabled {
+/* Style for the Copy button specifically after copying */
+.share-link-popup button.copy-button:disabled {
     cursor: default;
-    background-color: #d4edda; /* Greenish background when copied */
+    background-color: #d4edda; /* Greenish feedback */
     color: #155724; /* Dark green text */
     border-color: #c3e6cb;
 }
 
-#share-link-display button.close-share-display {
-    background-color: #f8d7da;
-    color: #721c24;
-    border: 1px solid #f5c6cb;
-    padding: 4px 8px; /* Make it smaller */
+/* Style for the Close button */
+.share-link-popup button.close-popup {
+    padding: 6px 10px; /* Make close button slightly smaller */
     line-height: 1;
+    font-weight: bold;
+    background-color: #f8d7da; /* Light red */
+    color: #721c24; /* Dark red */
+    border-color: #f5c6cb;
 }
-#share-link-display button.close-share-display:hover {
-     background-color: #f1b0b7;
+.share-link-popup button.close-popup:hover {
+     background-color: #f1b0b7; /* Darker red on hover */
+     border-color: #eba3aa;
 }
