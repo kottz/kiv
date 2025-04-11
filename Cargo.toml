@@ -1,5 +1,5 @@
 [package]
-name = "axum-htmx-fileshare"
+name = "kiv"
 version = "0.1.0"
 edition = "2021"
 

@@ -165,31 +165,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "axum-htmx-fileshare"
-version = "0.1.0"
-dependencies = [
- "axum",
- "bytes",
- "chrono",
- "clap",
- "dashmap",
- "http",
- "humansize",
- "maud",
- "mime_guess",
- "serde",
- "serde_json",
- "tokio",
- "tokio-util",
- "tower 0.4.13",
- "tower-http",
- "tracing",
- "tracing-subscriber",
- "urlencoding",
- "uuid",
-]
-
-[[package]]
 name = "axum-macros"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -552,6 +527,31 @@ checksum = "1cfaf33c695fc6e08064efbc1f72ec937429614f25eef83af942d0e227c3a28f"
 dependencies = [
  "once_cell",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "kiv"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "bytes",
+ "chrono",
+ "clap",
+ "dashmap",
+ "http",
+ "humansize",
+ "maud",
+ "mime_guess",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tower 0.4.13",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "urlencoding",
+ "uuid",
 ]
 
 [[package]]

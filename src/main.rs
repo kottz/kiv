@@ -698,7 +698,7 @@ async fn download_handler(
                 .to_string();
 
             // Stream the file content efficiently
-            let stream = ReaderStream::new(file);
+            let stream = ReaderStream::with_capacity(file, 1 << 18);
             let body = axum::body::Body::from_stream(stream);
 
             // Set headers for download
