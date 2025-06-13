@@ -162,9 +162,26 @@ async fn root_handler() -> Markup {
                 meta name="viewport" content="width=device-width, initial-scale=1.0";
                 title { "File Browser" }
                 link rel="stylesheet" href="/static/styles.css";
-                script src="/static/htmx.min.js" defer {}
+                link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/default.min.css";
+                script src="/static/htmx.min.js" {}
+                script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js" {}
+                script { (PreEscaped("hljs.highlightAll();")) }
                 script src="/static/context_menu.js" defer {}
                 script src="/static/copy_link.js" defer {}
+                script {
+                    (PreEscaped("
+                        // Highlight syntax when HTMX swaps content
+                        htmx.on('htmx:afterSwap', function(evt) {
+                            console.log('HTMX afterSwap event triggered');
+                            if (typeof hljs !== 'undefined') {
+                                console.log('Running hljs.highlightAll()');
+                                hljs.highlightAll();
+                            } else {
+                                console.log('hljs is undefined');
+                            }
+                        });
+                    "))
+                }
             }
             body {
                 h1 { "File Browser" }
@@ -429,19 +446,14 @@ async fn preview_handler(
             }
         }
         script {
-            (PreEscaped("
-                // Load highlight.js if not already loaded
-                if (typeof hljs === 'undefined') {
-                    const script = document.createElement('script');
-                    script.src = '/static/highlight.min.js';
-                    script.onload = function() {
-                        hljs.highlightAll();
-                    };
-                    document.head.appendChild(script);
-                } else {
+            (PreEscaped(&format!("
+                console.log('Preview content loaded for language: {}');
+                console.log('hljs available:', typeof hljs !== 'undefined');
+                if (typeof hljs !== 'undefined') {{
+                    console.log('Calling hljs.highlightAll() from preview');
                     hljs.highlightAll();
-                }
-            "))
+                }}
+            ", language)))
         }
     })
 }
