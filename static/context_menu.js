@@ -34,7 +34,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // --- Basic structural check ---
             if (!shareTargetLi || !shareButtonWrapper) {
-                console.error("Context menu structure elements (#context-share-target or #context-share-button-wrapper) missing!");
+                console.error("Context menu structure elements missing!");
                 hideContextMenu(); // Hide if structure is broken
                 return;
             }
@@ -128,6 +128,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // console.log("Share button clicked inside context menu, hiding menu."); // Uncomment for debugging
             hideContextMenu(); // Hide immediately, no timeout needed
         }
+        
     });
 
 

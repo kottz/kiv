@@ -59,6 +59,11 @@ struct SharePayload {
     path: String,
 }
 
+#[derive(Deserialize, Debug)]
+struct PreviewQuery {
+    path: String,
+}
+
 // --- Response Data --- (remains the same)
 #[derive(Serialize, Debug)]
 struct DirEntryInfo {
@@ -123,6 +128,7 @@ async fn main() {
     let app = Router::new()
         .route("/", get(root_handler))
         .route("/browse", get(browse_handler))
+        .route("/preview", get(preview_handler))
         .route("/share", post(share_handler)) // This handler is modified
         .route("/share/{uuid}", get(share_landing_handler))
         .route("/direct-download/{uuid}", get(download_handler))
@@ -308,19 +314,134 @@ async fn browse_handler(
                     @let item_id_base = item.path.replace(|c: char| !c.is_alphanumeric() && c != '-', "_");
                     @let li_id = format!("file-item-{}", item_id_base);
                     @let placeholder_id = format!("share-placeholder-{}", item_id_base);
-                     li #(li_id) data-path=(item.path) data-is-dir="false" {
-                         div {
-                            span class="icon" { "📄" }
-                            span { (item.name) }
-                         }
-                         div class="file-info" {
-                             @if let Some(size) = &item.size { span { (size) " " } }
-                             @if let Some(modified) = &item.modified { span { (modified) } }
-                         }
+                    @let full_file_path = state.root_dir.join(&item.path);
+                    @let is_previewable = is_previewable_file(&full_file_path);
+
+                    @if is_previewable {
+                        @let encoded_path = urlencoding::encode(&item.path);
+                        @let preview_url = format!("/preview?path={}", encoded_path);
+                        li #(li_id) data-path=(item.path) data-is-dir="false"
+                           hx-get=(preview_url)
+                           hx-target="#file-browser"
+                           hx-swap="innerHTML"
+                           style="cursor: pointer;" {
+                            div {
+                                span class="icon" { "📄" }
+                                span { (item.name) }
+                            }
+                            div class="file-info" {
+                                @if let Some(size) = &item.size { span { (size) " " } }
+                                @if let Some(modified) = &item.modified { span { (modified) } }
+                            }
+                        }
+                    } @else {
+                        li #(li_id) data-path=(item.path) data-is-dir="false" {
+                            div {
+                                span class="icon" { "📄" }
+                                span { (item.name) }
+                            }
+                            div class="file-info" {
+                                @if let Some(size) = &item.size { span { (size) " " } }
+                                @if let Some(modified) = &item.modified { span { (modified) } }
+                            }
+                        }
                     }
                     div #(placeholder_id) class="share-link-placeholder" {}
                 }
             }
+        }
+    })
+}
+
+// --- preview_handler ---
+async fn preview_handler(
+    State(state): State<SharedState>,
+    Query(query): Query<PreviewQuery>,
+) -> Result<Markup, Response> {
+    let sanitized_req_path = sanitize_path(&query.path);
+    let full_path = resolve_and_validate_path(&state.root_dir, &sanitized_req_path)?;
+
+    if !full_path.is_file() {
+        error!("Preview attempt on non-file: {}", full_path.display());
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "Preview is only supported for files.",
+        ));
+    }
+
+    // Check if file is previewable
+    if !is_previewable_file(&full_path) {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "File type not supported for preview.",
+        ));
+    }
+
+    // Read file content
+    let content = match tokio::fs::read_to_string(&full_path).await {
+        Ok(content) => content,
+        Err(e) => {
+            error!(
+                "Failed to read file for preview {}: {}",
+                full_path.display(),
+                e
+            );
+            return Err(error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Could not read file content.",
+            ));
+        }
+    };
+
+    let filename = full_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("Unknown file")
+        .to_string();
+
+    let language = detect_language(&full_path);
+
+    // Get the parent directory for the back button
+    let parent_path = sanitized_req_path
+        .parent()
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_else(|| ".".to_string());
+    let encoded_parent_path = urlencoding::encode(&parent_path);
+    let back_url = format!("/browse?path={}", encoded_parent_path);
+
+    Ok(html! {
+        div class="preview-container" {
+            div class="preview-header" {
+                h1 { "File Preview: " (filename) }
+                div class="preview-actions" {
+                    button hx-get=(back_url)
+                           hx-target="#file-browser"
+                           hx-swap="innerHTML"
+                           class="close-button" { "Back to Files" }
+                }
+            }
+            div class="preview-content" {
+                pre {
+                    code class=(format!("language-{}", language)) {
+                        (content)
+                    }
+                }
+            }
+        }
+        script {
+            (PreEscaped("
+                // Load highlight.js if not already loaded
+                if (typeof hljs === 'undefined') {
+                    const script = document.createElement('script');
+                    script.src = '/static/highlight.min.js';
+                    script.onload = function() {
+                        hljs.highlightAll();
+                    };
+                    document.head.appendChild(script);
+                } else {
+                    hljs.highlightAll();
+                }
+            "))
         }
     })
 }
@@ -748,4 +869,151 @@ fn get_metadata_strings(metadata: &Metadata) -> (Option<String>, Option<String>)
     });
 
     (size, modified)
+}
+
+fn is_previewable_file(path: &Path) -> bool {
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    matches!(
+        extension.as_str(),
+        "rs" | "py"
+            | "js"
+            | "ts"
+            | "jsx"
+            | "tsx"
+            | "html"
+            | "htm"
+            | "css"
+            | "scss"
+            | "sass"
+            | "less"
+            | "json"
+            | "xml"
+            | "yaml"
+            | "yml"
+            | "toml"
+            | "ini"
+            | "cfg"
+            | "conf"
+            | "config"
+            | "txt"
+            | "md"
+            | "markdown"
+            | "rst"
+            | "log"
+            | "csv"
+            | "tsv"
+            | "c"
+            | "cpp"
+            | "cc"
+            | "cxx"
+            | "h"
+            | "hpp"
+            | "hxx"
+            | "java"
+            | "kt"
+            | "scala"
+            | "go"
+            | "rb"
+            | "php"
+            | "sh"
+            | "bash"
+            | "zsh"
+            | "fish"
+            | "sql"
+            | "dockerfile"
+            | "makefile"
+            | "cmake"
+            | "gradle"
+            | "vue"
+            | "svelte"
+            | "dart"
+            | "swift"
+            | "r"
+            | "m"
+            | "mm"
+            | "pl"
+            | "pm"
+            | "lua"
+            | "ps1"
+            | "psm1"
+            | "psd1"
+            | "tex"
+            | "latex"
+            | "bib"
+            | "cls"
+            | "sty"
+    )
+}
+
+fn detect_language(path: &Path) -> String {
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    let filename = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    // Handle special filenames first
+    if filename == "dockerfile" || filename.starts_with("dockerfile.") {
+        return "dockerfile".to_string();
+    }
+    if filename == "makefile" || filename.starts_with("makefile.") {
+        return "makefile".to_string();
+    }
+
+    // Handle extensions
+    match extension.as_str() {
+        "rs" => "rust",
+        "py" => "python",
+        "js" | "mjs" => "javascript",
+        "ts" => "typescript",
+        "jsx" => "javascript",
+        "tsx" => "typescript",
+        "html" | "htm" => "html",
+        "css" => "css",
+        "scss" => "scss",
+        "sass" => "sass",
+        "less" => "less",
+        "json" => "json",
+        "xml" => "xml",
+        "yaml" | "yml" => "yaml",
+        "toml" => "toml",
+        "ini" | "cfg" | "conf" | "config" => "ini",
+        "md" | "markdown" => "markdown",
+        "rst" => "rst",
+        "c" => "c",
+        "cpp" | "cc" | "cxx" => "cpp",
+        "h" | "hpp" | "hxx" => "c",
+        "java" => "java",
+        "kt" => "kotlin",
+        "scala" => "scala",
+        "go" => "go",
+        "rb" => "ruby",
+        "php" => "php",
+        "sh" | "bash" | "zsh" | "fish" => "bash",
+        "sql" => "sql",
+        "vue" => "vue",
+        "svelte" => "svelte",
+        "dart" => "dart",
+        "swift" => "swift",
+        "r" => "r",
+        "m" | "mm" => "objectivec",
+        "pl" | "pm" => "perl",
+        "lua" => "lua",
+        "ps1" | "psm1" | "psd1" => "powershell",
+        "tex" | "latex" => "latex",
+        "csv" | "tsv" => "csv",
+        _ => "plaintext",
+    }
+    .to_string()
 }
