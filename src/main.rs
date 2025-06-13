@@ -1,16 +1,16 @@
 use axum::{
+    Router,
     extract::{Form, Path as AxumPath, Query, State}, // Host is no longer needed here or implicitly
-    http::{header, HeaderMap, HeaderValue, StatusCode},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, post},
-    Router,
 };
 // ... (other imports remain the same)
 use chrono::prelude::*;
 use clap::Parser;
 use dashmap::DashMap;
-use humansize::{format_size, BINARY};
-use maud::{html, Markup, PreEscaped, DOCTYPE};
+use humansize::{BINARY, format_size};
+use maud::{DOCTYPE, Markup, PreEscaped, html};
 use serde::{Deserialize, Serialize};
 use std::{
     fs::Metadata,
@@ -25,7 +25,7 @@ use tower_http::{
     services::ServeDir,
     trace::TraceLayer,
 };
-use tracing::{error, info, Level};
+use tracing::{Level, error, info};
 use tracing_subscriber::FmtSubscriber;
 use uuid::Uuid;
 
@@ -170,6 +170,7 @@ async fn root_handler() -> Markup {
                 script { (PreEscaped("hljs.highlightAll();")) }
                 script src="/static/context_menu.js" defer {}
                 script src="/static/copy_link.js" defer {}
+                script src="/static/image_hover.js" defer {}
                 script {
                     (PreEscaped("
                         // Highlight syntax when HTMX swaps content
@@ -344,18 +345,35 @@ async fn browse_handler(
                         } else {
                             format!("/preview?path={}", encoded_path)
                         };
-                        li #(li_id) data-path=(item.path) data-is-dir="false"
-                           hx-get=(preview_url)
-                           hx-target="#file-browser"
-                           hx-swap="innerHTML"
-                           style="cursor: pointer;" {
-                            div {
-                                span class="icon" { @if is_image { "🖼️" } @else { "📄" } }
-                                span { (item.name) }
+                        @if is_image {
+                            li #(li_id) data-path=(item.path) data-is-dir="false" data-image-url=(format!("/direct-download-image?path={}", encoded_path))
+                               hx-get=(preview_url)
+                               hx-target="#file-browser"
+                               hx-swap="innerHTML"
+                               style="cursor: pointer;" {
+                                div {
+                                    span class="icon" { "🖼️" }
+                                    span { (item.name) }
+                                }
+                                div class="file-info" {
+                                    @if let Some(size) = &item.size { span { (size) " " } }
+                                    @if let Some(modified) = &item.modified { span { (modified) } }
+                                }
                             }
-                            div class="file-info" {
-                                @if let Some(size) = &item.size { span { (size) " " } }
-                                @if let Some(modified) = &item.modified { span { (modified) } }
+                        } @else {
+                            li #(li_id) data-path=(item.path) data-is-dir="false"
+                               hx-get=(preview_url)
+                               hx-target="#file-browser"
+                               hx-swap="innerHTML"
+                               style="cursor: pointer;" {
+                                div {
+                                    span class="icon" { "📄" }
+                                    span { (item.name) }
+                                }
+                                div class="file-info" {
+                                    @if let Some(size) = &item.size { span { (size) " " } }
+                                    @if let Some(modified) = &item.modified { span { (modified) } }
+                                }
                             }
                         }
                     } @else {
