@@ -799,7 +799,12 @@ fn sanitize_path(path_str: &str) -> PathBuf {
     for component in Path::new(&decoded_path).components() {
         match component {
             std::path::Component::Normal(comp) => {
-                if !comp.to_string_lossy().starts_with('.') || comp == std::ffi::OsStr::new(".") {
+                let comp_str = comp.to_string_lossy();
+                // Allow current directory, or non-hidden files, or hidden files with previewable extensions
+                if comp == std::ffi::OsStr::new(".")
+                    || !comp_str.starts_with('.')
+                    || is_previewable_file(&PathBuf::from(comp_str.as_ref()))
+                {
                     if comp == std::ffi::OsStr::new(".") && !clean_path.as_os_str().is_empty() {
                         continue;
                     }
