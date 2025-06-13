@@ -1041,7 +1041,7 @@ fn is_image_file(path: &Path) -> bool {
 
     matches!(
         extension.as_str(),
-        "jpg" | "jpeg" | "png" | "gif" | "bmp" | "svg" | "webp" | "ico" | "tiff" | "tif"
+        "jpg" | "jpeg" | "png" | "gif" | "bmp" | "svg" | "webp" | "ico" | "tiff" | "tif" | "avif"
     )
 }
 
@@ -1131,6 +1131,7 @@ fn is_previewable_file(path: &Path) -> bool {
             | "ico"
             | "tiff"
             | "tif"
+            | "avif"
     )
 }
 
