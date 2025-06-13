@@ -129,6 +129,8 @@ async fn main() {
         .route("/", get(root_handler))
         .route("/browse", get(browse_handler))
         .route("/preview", get(preview_handler))
+        .route("/image-preview", get(image_preview_handler))
+        .route("/direct-download-image", get(direct_image_handler))
         .route("/share", post(share_handler)) // This handler is modified
         .route("/share/{uuid}", get(share_landing_handler))
         .route("/direct-download/{uuid}", get(download_handler))
@@ -336,14 +338,19 @@ async fn browse_handler(
 
                     @if is_previewable {
                         @let encoded_path = urlencoding::encode(&item.path);
-                        @let preview_url = format!("/preview?path={}", encoded_path);
+                        @let is_image = is_image_file(&full_file_path);
+                        @let preview_url = if is_image {
+                            format!("/image-preview?path={}", encoded_path)
+                        } else {
+                            format!("/preview?path={}", encoded_path)
+                        };
                         li #(li_id) data-path=(item.path) data-is-dir="false"
                            hx-get=(preview_url)
                            hx-target="#file-browser"
                            hx-swap="innerHTML"
                            style="cursor: pointer;" {
                             div {
-                                span class="icon" { "📄" }
+                                span class="icon" { @if is_image { "🖼️" } @else { "📄" } }
                                 span { (item.name) }
                             }
                             div class="file-info" {
@@ -456,6 +463,125 @@ async fn preview_handler(
             ", language)))
         }
     })
+}
+
+// --- image_preview_handler ---
+async fn image_preview_handler(
+    State(state): State<SharedState>,
+    Query(query): Query<PreviewQuery>,
+) -> Result<Markup, Response> {
+    let sanitized_req_path = sanitize_path(&query.path);
+    let full_path = resolve_and_validate_path(&state.root_dir, &sanitized_req_path)?;
+
+    if !full_path.is_file() {
+        error!("Image preview attempt on non-file: {}", full_path.display());
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "Preview is only supported for files.",
+        ));
+    }
+
+    // Check if file is an image
+    if !is_image_file(&full_path) {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "File type not supported for image preview.",
+        ));
+    }
+
+    let filename = full_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("Unknown file")
+        .to_string();
+
+    // Get the parent directory for the back button
+    let parent_path = sanitized_req_path
+        .parent()
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_else(|| ".".to_string());
+    let encoded_parent_path = urlencoding::encode(&parent_path);
+    let back_url = format!("/browse?path={}", encoded_parent_path);
+
+    // Create the image URL for display
+    let encoded_image_path = urlencoding::encode(&query.path);
+    let image_url = format!("/direct-download-image?path={}", encoded_image_path);
+
+    Ok(html! {
+        div class="preview-container image-preview" {
+            div class="preview-header" {
+                h1 { "Image Preview: " (filename) }
+                div class="preview-actions" {
+                    button hx-get=(back_url)
+                           hx-target="#file-browser"
+                           hx-swap="innerHTML"
+                           class="close-button" { "Back to Files" }
+                }
+            }
+            div class="image-preview-content" {
+                img src=(image_url) alt=(filename) class="preview-image" {}
+            }
+        }
+    })
+}
+
+// --- direct_image_handler ---
+async fn direct_image_handler(
+    State(state): State<SharedState>,
+    Query(query): Query<PreviewQuery>,
+) -> Response {
+    let sanitized_req_path = sanitize_path(&query.path);
+    let full_path = match resolve_and_validate_path(&state.root_dir, &sanitized_req_path) {
+        Ok(path) => path,
+        Err(response) => return response,
+    };
+
+    if !full_path.is_file() {
+        error!("Direct image attempt on non-file: {}", full_path.display());
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            "Direct image access is only supported for files.",
+        );
+    }
+
+    // Check if file is an image
+    if !is_image_file(&full_path) {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            "File type not supported for direct image access.",
+        );
+    }
+
+    match tokio::fs::File::open(&full_path).await {
+        Ok(file) => {
+            let mime_type = mime_guess::from_path(&full_path)
+                .first_or_octet_stream()
+                .to_string();
+
+            let stream = ReaderStream::with_capacity(file, 1 << 18); // 256KiB buffer
+            let body = axum::body::Body::from_stream(stream);
+
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                header::CONTENT_TYPE,
+                HeaderValue::from_str(&mime_type)
+                    .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
+            );
+
+            (StatusCode::OK, headers, body).into_response()
+        }
+        Err(e) => {
+            error!(
+                "Failed to open image file for direct access {}: {}",
+                full_path.display(),
+                e
+            );
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Could not read image file.",
+            )
+        }
+    }
 }
 
 // --- MODIFIED share_handler ---
@@ -888,6 +1014,19 @@ fn get_metadata_strings(metadata: &Metadata) -> (Option<String>, Option<String>)
     (size, modified)
 }
 
+fn is_image_file(path: &Path) -> bool {
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    matches!(
+        extension.as_str(),
+        "jpg" | "jpeg" | "png" | "gif" | "bmp" | "svg" | "webp" | "ico" | "tiff" | "tif"
+    )
+}
+
 fn is_previewable_file(path: &Path) -> bool {
     let extension = path
         .extension()
@@ -964,6 +1103,16 @@ fn is_previewable_file(path: &Path) -> bool {
             | "bib"
             | "cls"
             | "sty"
+            | "jpg"
+            | "jpeg"
+            | "png"
+            | "gif"
+            | "bmp"
+            | "svg"
+            | "webp"
+            | "ico"
+            | "tiff"
+            | "tif"
     )
 }
 

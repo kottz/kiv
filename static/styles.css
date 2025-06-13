@@ -449,3 +449,36 @@ a:hover {
         font-size: 12px;
     }
 }
+
+/* --- Image Preview Styles --- */
+.image-preview-content {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+    background-color: #f8f9fa;
+    min-height: 60vh;
+}
+
+.preview-image {
+    max-width: 100%;
+    max-height: 80vh;
+    object-fit: contain;
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    background-color: white;
+    padding: 10px;
+}
+
+/* Responsive image preview */
+@media (max-width: 768px) {
+    .image-preview-content {
+        padding: 10px;
+        min-height: 50vh;
+    }
+    
+    .preview-image {
+        max-height: 60vh;
+        padding: 5px;
+    }
+}
