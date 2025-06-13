@@ -17,7 +17,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            const textToCopy = inputElement.value;
+            let textToCopy = inputElement.value;
+            
+            // If the value is a relative URL (starts with /), make it absolute
+            if (textToCopy.startsWith('/')) {
+                const protocol = window.location.protocol; // http: or https:
+                const host = window.location.host; // hostname:port
+                textToCopy = `${protocol}//${host}${textToCopy}`;
+            }
 
             try {
                 await navigator.clipboard.writeText(textToCopy);

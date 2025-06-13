@@ -327,18 +327,20 @@ a:hover {
 
 .download-button {
     display: block;
-    width: 100%;
-    padding: 15px;
+    width: auto;
+    padding: 15px 30px;
     background-color: #4CAF50;
     color: white;
     border: none;
-    border-radius: 4px;
+    border-radius: 6px;
     font-size: 1.1em;
     font-weight: bold;
     cursor: pointer;
     text-align: center;
     text-decoration: none;
     transition: background-color 0.3s;
+    margin: 20px auto;
+    max-width: 250px;
 }
 
 .download-button:hover {

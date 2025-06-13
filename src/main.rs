@@ -656,8 +656,7 @@ async fn share_handler(
             div style="display: flex; align-items: center; gap: 10px;" {
                 input type="text"
                       id=(input_id)
-                      // --- NOW USING THE RELATIVE LANDING PAGE URL PATH ---
-                      value=(share_link_path) // Use the relative path
+                      value=(share_link_path) // Use the relative path initially
                       readonly;
                 button class="copy-button"
                        data-copy-target={"#"(input_id)}
@@ -667,6 +666,19 @@ async fn share_handler(
                         onclick={"document.getElementById('"(target_placeholder_id)"').innerHTML = '';"}
                         { (PreEscaped("×")) } // Close button (cross icon)
             }
+        }
+        script {
+            (PreEscaped(&format!("
+                // Convert relative URL to absolute URL in the input field
+                (function() {{
+                    const input = document.getElementById('{}');
+                    if (input && input.value.startsWith('/')) {{
+                        const protocol = window.location.protocol;
+                        const host = window.location.host;
+                        input.value = protocol + '//' + host + input.value;
+                    }}
+                }})();
+            ", input_id)))
         }
     })
 }
@@ -943,17 +955,12 @@ fn sanitize_path(path_str: &str) -> PathBuf {
     for component in Path::new(&decoded_path).components() {
         match component {
             std::path::Component::Normal(comp) => {
-                let comp_str = comp.to_string_lossy();
-                // Allow current directory, or non-hidden files, or hidden files with previewable extensions
-                if comp == std::ffi::OsStr::new(".")
-                    || !comp_str.starts_with('.')
-                    || is_previewable_file(&PathBuf::from(comp_str.as_ref()))
-                {
-                    if comp == std::ffi::OsStr::new(".") && !clean_path.as_os_str().is_empty() {
-                        continue;
-                    }
-                    clean_path.push(comp);
+                // Allow all normal path components (including hidden files and directories)
+                // Security is handled by resolve_and_validate_path which ensures we stay within root_dir
+                if comp == std::ffi::OsStr::new(".") && !clean_path.as_os_str().is_empty() {
+                    continue; // Skip redundant "." components
                 }
+                clean_path.push(comp);
             }
             std::path::Component::RootDir | std::path::Component::Prefix(_) => {}
             std::path::Component::CurDir => {
